@@ -201,15 +201,23 @@ int main()
         exit(EXIT_FAILURE);
     }
 
+    // obsluz beldy
+    pthread_join(&send_msg_thread, NULL);
+    pthread_join(&recv_msg_thread, NULL);
+
     while (1)
     {
+        pthread_join(&send_msg_thread, NULL);
+        pthread_join(&recv_msg_thread, NULL);
+
         if (flag)
         {
             printf("\nBye\n");
             break;
         }
     }
+}
 
-    close(sockfd);
-    return 0;
+close(sockfd);
+return 0;
 }
