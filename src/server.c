@@ -9,8 +9,19 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <semaphore.h>
+#include <errno.h>
 #include "proto.h"
 #include "server.h"
+
+#define SAFE(v)                                                                                    \
+    if ((v) < 0)                                                                                   \
+    {                                                                                              \
+        fprintf(stderr, "Error w pliku %s w linii %d. %s\n", __FILE__, __LINE__, strerror(errno)); \
+        exit(-1);                                                                                  \
+    }
+
+sem_t sem;
 
 #define MAX_NUMBER_OF_ANNOUNCEMENTS 100
 
@@ -46,7 +57,6 @@ void send_to_all_clients(ClientList *np, char tmp_buffer[])
         {
 
             printf("Send to sockfd %d: \"%s\" \n", tmp->data, tmp_buffer);
-            printf("send\n");
             send(tmp->data, tmp_buffer, LENGTH_SEND, 0);
         }
         tmp = tmp->link;
@@ -90,29 +100,28 @@ void sendAnnouncement(struct Announcement helper, int sockfd, int counter)
     char formattedTime[100] = "";
 
     sprintf(label, "Ogloszenie nr %d", counter + 1);
-    send(sockfd, label, LENGTH_SEND, 0);
+    SAFE(send(sockfd, label, LENGTH_SEND, 0));
 
     sprintf(formattedTopic, "• tytul: %s", helper.topic);
-    send(sockfd, formattedTopic, LENGTH_SEND, 0);
+    SAFE(send(sockfd, formattedTopic, LENGTH_SEND, 0));
 
     sprintf(formattedDesc, "• tresc: %s", helper.desc);
-    send(sockfd, formattedDesc, LENGTH_SEND, 0);
+    SAFE(send(sockfd, formattedDesc, LENGTH_SEND, 0));
 
     sprintf(formattedDate, "• dodane: %s", helper.date);
-    send(sockfd, formattedDate, LENGTH_SEND, 0);
+    SAFE(send(sockfd, formattedDate, LENGTH_SEND, 0));
 
     sprintf(formattedAuthor, "• autor: %s", findUserName(helper.sockfd));
-    send(sockfd, formattedAuthor, LENGTH_SEND, 0);
+    SAFE(send(sockfd, formattedAuthor, LENGTH_SEND, 0));
 
     sprintf(formattedTime, "• wygasnie za: %d s", helper.time);
-    send(sockfd, formattedTime, LENGTH_SEND, 0);
+    SAFE(send(sockfd, formattedTime, LENGTH_SEND, 0));
 
-    send(sockfd, "", LENGTH_SEND, 0);
+    SAFE(send(sockfd, "", LENGTH_SEND, 0));
 }
 
 void client_handler(void *p_client)
 {
-
     char nickname[LENGTH_NAME] = {};
     char recv_buffer[LENGTH_MSG] = {};
     char send_buffer[LENGTH_SEND] = {};
@@ -146,6 +155,7 @@ void client_handler(void *p_client)
                 continue;
             }
             int command = atoi(recv_buffer);
+            sem_wait(&sem);
             switch (command)
             {
             case 1: // lista ogloszen
@@ -210,7 +220,7 @@ void client_handler(void *p_client)
 
                 time_t t = time(NULL);
                 struct tm tm = *localtime(&t);
-                char date[100];
+                char date[200];
 
                 sprintf(date, "%d-%d-%d %d:%d:%d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
                 strcpy(announcements[currentNumberOfAnnouncements].date, date);
@@ -281,7 +291,7 @@ void client_handler(void *p_client)
                 sprintf(send_buffer, "nieznana komenda");
                 break;
             }
-            // sprintf(send_buffer, "%s：%s from %s", np->name, recv_buffer, np->ip);
+            sem_post(&sem);
         }
         else if (receive == 0 || strcmp(recv_buffer, "exit") == 0)
         {
@@ -312,6 +322,7 @@ void client_handler(void *p_client)
 
 int main()
 {
+    // obsluzenie zakonczenia procesu
     signal(SIGINT, catch_ctrl_c_and_exit);
 
     server_sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -330,21 +341,24 @@ int main()
     server_info.sin_addr.s_addr = INADDR_ANY;
     server_info.sin_port = htons(8888);
 
+    // obluga bledu
     bind(server_sockfd, (struct sockaddr *)&server_info, s_addrlen);
     listen(server_sockfd, 5);
 
-    printf("• getsockname\n\n");
-    getsockname(server_sockfd, (struct sockaddr *)&server_info, (socklen_t *)&s_addrlen);
-    printf("Start Server on: %s:%d\n", inet_ntoa(server_info.sin_addr), ntohs(server_info.sin_port));
+    pthread_t time_handler_thread;
+    if (pthread_create(&time_handler_thread, NULL, (void *)time_handler, NULL) != 0)
+    {
+        perror("Create time_handler_thread error!\n");
+        exit(EXIT_FAILURE);
+    }
 
-    printf("• newClient\n\n");
     client_root = newClient(server_sockfd, inet_ntoa(server_info.sin_addr));
     client_now = client_root;
 
-    printf("• while\n\n");
+    sem_init(&sem, 0, 1);
+
     while (1)
     {
-        printf("• accept\n\n");
         client_sockfd = accept(server_sockfd, (struct sockaddr *)&client_info, (socklen_t *)&c_addrlen);
 
         printf("Client %s:%d come in.\n", inet_ntoa(client_info.sin_addr), ntohs(client_info.sin_port));
@@ -355,19 +369,30 @@ int main()
         client_now = new_client;
 
         pthread_t client_handler_thread;
+
         if (pthread_create(&client_handler_thread, NULL, (void *)client_handler, (void *)new_client) != 0)
         {
             perror("Create client_handler_thread error!\n");
             exit(EXIT_FAILURE);
         }
 
-        pthread_t time_handler_thread;
-        if (pthread_create(&time_handler_thread, NULL, (void *)time_handler, NULL) != 0)
+        if (leave_flag)
         {
-            perror("Create time_handler_thread error!\n");
-            exit(EXIT_FAILURE);
+            printf("\nBye\n");
+            break;
         }
     }
+
+    // ClientList *tmp = client_root->link;
+    // while (tmp != NULL)
+    // {
+    //     // pthread_join
+    //     tmp = tmp->link;
+    // }
+
+    pthread_join(time_handler_thread, NULL);
+
+    sem_destroy(&sem);
 
     return 0;
 }

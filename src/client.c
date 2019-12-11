@@ -131,7 +131,6 @@ void send_msg_handler()
             send(sockfd, answer, LENGTH_MSG, 0);
             break;
         default:
-            // sprintf(send_buffer, "nieznana komenda");
             break;
         }
 
@@ -181,6 +180,7 @@ int main()
         exit(EXIT_FAILURE);
     }
 
+    // obsluga bledu
     getsockname(sockfd, (struct sockaddr *)&client_info, (socklen_t *)&c_addrlen);
     getpeername(sockfd, (struct sockaddr *)&server_info, (socklen_t *)&s_addrlen);
     printf("Connect to Server: %s:%d\n", inet_ntoa(server_info.sin_addr), ntohs(server_info.sin_port));
@@ -216,8 +216,7 @@ int main()
             break;
         }
     }
-}
 
-close(sockfd);
-return 0;
+    close(sockfd);
+    return 0;
 }
